@@ -36,3 +36,8 @@ node_modules/
 # ç³»ç»Ÿ
 .DS_Store
 Thumbs.db
+
+# µ÷ÊÔ²ÐÁô
+qr_*.png
+qr_*.txt
+poll-*.tmp
