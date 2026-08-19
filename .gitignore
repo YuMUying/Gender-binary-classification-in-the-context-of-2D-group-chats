@@ -1,0 +1,38 @@
+# 敏感数据与本地配置（不入库）
+data/
+*.db
+*.db-wal
+*.db-shm
+*.sqlite
+
+# 输出产物（含 QQ 号等敏感信息）
+outputs/
+research/*.jsonl
+research/qce_batches/
+research/qce_batch_log.jsonl
+research/keepalive.log
+research/login_qrcode.png
+research/*.txt
+
+# 真实配置（含 token/账号）
+config/config-group*.json
+config/excluded_users.json
+config/config.json
+config/onebot11*.json
+config/napcat*.json
+config/webui.json
+
+# 模型实验产物（只保留生产模型 via LFS）
+models/*
+!models/bert-v10-wb/
+models/*/users.csv
+models/*/metrics.json
+
+# Python/Node
+__pycache__/
+node_modules/
+*.pyc
+
+# 系统
+.DS_Store
+Thumbs.db

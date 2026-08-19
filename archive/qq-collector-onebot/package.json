@@ -1,0 +1,17 @@
+{
+  "name": "qq-collector-onebot",
+  "version": "0.1.0",
+  "description": "基于 OneBot 11 (NapCatQQ/LLOneBot) 的 QQ 群聊数据采集与自动回复机器人",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "history": "node history.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

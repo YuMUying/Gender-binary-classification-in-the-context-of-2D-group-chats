@@ -1,0 +1,29 @@
+{
+  "onebot": {
+    "wsUrl": "ws://127.0.0.1:3001",
+    "accessToken": "",
+    "httpUrl": "http://127.0.0.1:3000"
+  },
+  "storage": {
+    "dir": "./data"
+  },
+  "listen": {
+    "groups": [],
+    "friends": []
+  },
+  "filters": {
+    "ignoreSelf": true,
+    "keywords": []
+  },
+  "reply": {
+    "enabled": true,
+    "triggers": [
+      { "match": "exact", "keyword": "ping", "reply": "pong" },
+      { "match": "contains", "keyword": "在吗", "reply": "在的，有什么事？" }
+    ],
+    "commands": [
+      { "name": "help", "description": "显示帮助", "action": "help" },
+      { "name": "about", "description": "关于本机器人", "action": "about" }
+    ]
+  }
+}
