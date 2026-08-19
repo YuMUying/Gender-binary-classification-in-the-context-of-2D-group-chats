@@ -1,5 +1,23 @@
 # restart-qq-visible.ps1 — Restart QQ (with NapCat hook) and show its window ASAP to avoid black screen
+# 路径自动推导（QQBOT_ROOT 环境变量 > 同级 QQ_bot > H:\QQ_bot）
 $ErrorActionPreference = 'Continue'
+
+# ---- QQBot 根解析 ----
+function Resolve-QQBotRoot {
+  if ($env:QQBOT_ROOT -and (Test-Path $env:QQBOT_ROOT)) { return $env:QQBOT_ROOT }
+  $sibling = Join-Path (Split-Path -Parent $PSScriptRoot) 'QQ_bot'
+  if (Test-Path $sibling) { return $sibling }
+  if (Test-Path 'H:\QQ_bot') { return 'H:\QQ_bot' }
+  return $null
+}
+
+$QQBot = Resolve-QQBotRoot
+if (-not $QQBot) {
+  Write-Error '无法定位 QQ_bot 根目录：请设置环境变量 QQBOT_ROOT，或将 QQ_bot 放到本工程同级目录'
+  exit 1
+}
+$QQExe = Join-Path $QQBot 'QQ\QQ.exe'
+$NapCatNap = Join-Path $QQBot 'NapCat\napcat'
 
 Add-Type @"
 using System;
@@ -27,20 +45,21 @@ public class QQRestart {
 }
 "@
 
+Write-Host "QQBot 根: $QQBot"
 Write-Host '1) Killing QQ / BootMain ...'
 Get-Process QQ, QQEX, NapCatWinBootMain -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 3
 
-$env:NAPCAT_PATCH_PACKAGE = 'D:\Program Files (x86)\Tencent\NapCat\napcat\qqnt.json'
-$env:NAPCAT_LOAD_PATH = 'D:\Program Files (x86)\Tencent\NapCat\napcat\loadNapCat.js'
-$env:NAPCAT_INJECT_PATH = 'D:\Program Files (x86)\Tencent\NapCat\napcat\NapCatWinBootHook.dll'
-$env:NAPCAT_LAUNCHER_PATH = 'D:\Program Files (x86)\Tencent\NapCat\napcat\NapCatWinBootMain.exe'
-$env:NAPCAT_MAIN_PATH = 'D:/Program Files (x86)/Tencent/NapCat/napcat/napcat.mjs'
+$env:NAPCAT_PATCH_PACKAGE = Join-Path $NapCatNap 'qqnt.json'
+$env:NAPCAT_LOAD_PATH = Join-Path $NapCatNap 'loadNapCat.js'
+$env:NAPCAT_INJECT_PATH = Join-Path $NapCatNap 'NapCatWinBootHook.dll'
+$env:NAPCAT_LAUNCHER_PATH = Join-Path $NapCatNap 'NapCatWinBootMain.exe'
+$env:NAPCAT_MAIN_PATH = (Join-Path $NapCatNap 'napcat.mjs').Replace('\', '/')
 
 Write-Host '2) Starting BootMain ...'
-Start-Process -FilePath 'D:\Program Files (x86)\Tencent\NapCat\napcat\NapCatWinBootMain.exe' `
-  -ArgumentList '"D:\Program Files (x86)\Tencent\QQ.exe" "D:\Program Files (x86)\Tencent\NapCat\napcat\NapCatWinBootHook.dll"' `
-  -WorkingDirectory 'D:\Program Files (x86)\Tencent\NapCat\napcat'
+Start-Process -FilePath (Join-Path $NapCatNap 'NapCatWinBootMain.exe') `
+  -ArgumentList "`"$QQExe`" `"$(Join-Path $NapCatNap 'NapCatWinBootHook.dll')`"" `
+  -WorkingDirectory $NapCatNap
 
 Write-Host '3) Polling for QQ main window and showing it immediately ...'
 $shown = $false

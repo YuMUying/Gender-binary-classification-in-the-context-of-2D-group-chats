@@ -14,10 +14,11 @@ research/keepalive.log
 research/login_qrcode.png
 research/*.txt
 
-# 真实配置（含 token/账号）
-config/config-group*.json
+# 真实配置（含 token/账号/真实群号）
 config/excluded_users.json
 config/config.json
+config/config-group*.json
+config/config-274-main.json
 config/onebot11*.json
 config/napcat*.json
 config/webui.json
@@ -37,7 +38,14 @@ node_modules/
 .DS_Store
 Thumbs.db
 
-# ���Բ���
+# 调试残留
 qr_*.png
 qr_*.txt
 poll-*.tmp
+
+# 临时诊断脚本
+check_*.py
+ws_probe.*
+make_qr.py
+get_qr.py
+napcat-boot-out*
