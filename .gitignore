@@ -1,12 +1,11 @@
-# 敏感数据与本地配置（不入库）
+# 鏁忔劅鏁版嵁涓庢湰鍦伴厤缃紙涓嶅叆搴擄級
 data/
 *.db
 *.db-wal
 *.db-shm
 *.sqlite
 
-# 输出产物（含 QQ 号等敏感信息）
-outputs/
+# 杈撳嚭浜х墿锛堝惈 QQ 鍙风瓑鏁忔劅淇℃伅锛?outputs/
 research/*.jsonl
 research/qce_batches/
 research/qce_batch_log.jsonl
@@ -14,8 +13,7 @@ research/keepalive.log
 research/login_qrcode.png
 research/*.txt
 
-# 真实配置（含 token/账号/真实群号）
-config/excluded_users.json
+# 鐪熷疄閰嶇疆锛堝惈 token/璐﹀彿/鐪熷疄缇ゅ彿锛?config/excluded_users.json
 config/config.json
 config/config-group*.json
 config/config-274-main.json
@@ -23,9 +21,9 @@ config/onebot11*.json
 config/napcat*.json
 config/webui.json
 
-# 模型实验产物（只保留生产模型 via LFS）
-models/*
+# 妯″瀷瀹為獙浜х墿锛堝彧淇濈暀鐢熶骇妯″瀷 via LFS锛?models/*
 !models/bert-v10-wb/
+!models/foi-bert-final/
 models/*/users.csv
 models/*/metrics.json
 
@@ -34,16 +32,16 @@ __pycache__/
 node_modules/
 *.pyc
 
-# 系统
+# 绯荤粺
 .DS_Store
 Thumbs.db
 
-# 调试残留
+# 璋冭瘯娈嬬暀
 qr_*.png
 qr_*.txt
 poll-*.tmp
 
-# 临时诊断脚本
+# 涓存椂璇婃柇鑴氭湰
 check_*.py
 ws_probe.*
 make_qr.py
