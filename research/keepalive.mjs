@@ -27,6 +27,30 @@ import { DatabaseSync } from 'node:sqlite';
 
 const ROOT = path.resolve(import.meta.dirname, '..');
 
+// ---------- 消息保活配置（每小时发一条到保活群，打断 MSF 空闲计时） ----------
+const MSG_KEEPALIVE_GROUP = 1105502844;   // 自己人小群（保活测试群）
+const MSG_KEEPALIVE_INTERVAL = 60 * 60 * 1000;  // 每小时一次
+const MSG_KEEPALIVE_ENABLED = true;
+
+// 水群语料池（多样化，避免固定文本被识别为机器人）
+const CHAT_POOL = [
+  '今天天气不错啊',
+  '刚看到个有意思的，大家有空看看',
+  '摸鱼中，有人一起水吗',
+  '最近在折腾点小东西，还挺有意思',
+  '这个点了还有人吗',
+  '周末打算干点啥',
+  '刚吃完饭，瘫着不想动',
+  '有没有人打游戏啊',
+  '今晚月色真美（划掉）',
+  '冒个泡，证明我还活着',
+  '日常打卡，滴——',
+  '刚处理完一堆事，歇会儿',
+  '看到个段子笑死我了',
+  '有人知道那个新出的东西吗',
+  '摸鱼使我快乐',
+];
+
 // ---------- 账号 → 配置映射 ----------
 const ACCOUNTS = {
   '2740088195': {
@@ -133,6 +157,53 @@ function dbCollectFreshness() {
   }
 }
 
+// 收集器入库速率：最近 1 小时新增消息数（进程健康度第二指标）
+function collectRateLastHour() {
+  try {
+    const db = new DatabaseSync(DB_PATH, { readOnly: true });
+    const since = Math.floor(Date.now() / 1000) - 3600;
+    const r = db.prepare("SELECT COUNT(*) c FROM messages WHERE collected_at >= ?").get(since);
+    db.close();
+    return r?.c ?? 0;
+  } catch {
+    return -1;
+  }
+}
+
+// 消息流状态字符串（供保活消息使用）
+function msgFlowStatus() {
+  const now = Date.now();
+  const dbTs = dbFreshness();
+  const ageMin = dbTs > 0 ? (now / 1000 - dbTs) / 60 : 999;
+  if (ageMin > STALL_MIN) return `消息流已停 ${ageMin.toFixed(0)} 分钟`;
+  if (dbTs > 0) return `消息流正常（${ageMin.toFixed(0)} 分钟前有消息）`;
+  return '消息流状态未知';
+}
+
+// 发送保活消息：水群语料 + 进程情况（消息流 + 收集器入库速率）
+async function sendKeepaliveMsg() {
+  if (!MSG_KEEPALIVE_ENABLED) return false;
+  try {
+    const chat = CHAT_POOL[Math.floor(Math.random() * CHAT_POOL.length)];
+    const rate = collectRateLastHour();
+    const flow = msgFlowStatus();
+    const rateStr = rate < 0 ? '未知' : `${rate} 条`;
+    const msg = `${chat}\n（保活信号 | ${flow} | 近1h入库 ${rateStr} 条）`;
+    const r = await fetch(`http://127.0.0.1:${ACCT.onebotPort}/send_group_msg`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ group_id: MSG_KEEPALIVE_GROUP, message: msg }),
+      signal: AbortSignal.timeout(15000),
+    });
+    const j = await r.json();
+    const ok = j?.status === 'ok';
+    log(`保活消息 → 群${MSG_KEEPALIVE_GROUP}: ${ok ? 'OK' : '失败'}（${chat}）`);
+    return ok;
+  } catch (e) {
+    log(`保活消息发送失败: ${e.message}`);
+    return false;
+  }
+}
+
 async function restartHeadless() {
   log('⚠ 消息流断流，执行一次无窗口重启...');
   try {
@@ -155,6 +226,7 @@ async function main() {
   log(`保活启动（账号 ${ARGS.account}，群 ${ACCT.activeGroups.join(',')}，活性5min / 断流${STALL_MIN}min / ${restartMode}）`);
   let lastActivity = 0;
   let lastRestart = 0;
+  let lastMsgKeepalive = 0;
   let stallWarned = false;
   let collectStallWarned = false;
 
@@ -163,6 +235,12 @@ async function main() {
     const svc = await onebotOk(ACCT.onebotPort);
     const dbTs = dbFreshness();
     const collectTs = dbCollectFreshness();
+
+    // 0) 消息保活（每小时发一条到保活群，打断 MSF 空闲计时）
+    if (MSG_KEEPALIVE_ENABLED && now - lastMsgKeepalive > MSG_KEEPALIVE_INTERVAL) {
+      lastMsgKeepalive = now;
+      await sendKeepaliveMsg();
+    }
 
     // 1) 网络活性触发（每 5 分钟）
     if (now - lastActivity > ACTIVITY_INTERVAL) {
