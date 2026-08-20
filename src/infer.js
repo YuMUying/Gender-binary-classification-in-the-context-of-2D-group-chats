@@ -26,6 +26,7 @@ const ROOT = path.resolve(__dirname, '..');
 // ---- 配置 ----
 const TRIGGER_QQ = 2633083674;          // 私聊触发器
 const GROUP_IDS = [826904606, 1015142523];  // 群聊命令启用群（826904606 主群 + 1015142523 调试小群）
+const DEBUG_SAMPLE_RATE = 0.05;         // debug 日志抽样率（所有消息 5% 记录）
 const RE_PRIVATE = /^推理\s*[:：]?\s*(\d{5,12})/;
 const RE_GROUP_INFER = /^推理\s*[:：]?\s*(?:@?\s*(\d{5,12})|.+)/;   // 推理 <qq> 或 推理 @某人
 const RE_XNN = /^xnn\s*[:：]?\s*(?:@?\s*(\d{5,12})|.+)/;            // xnn <qq> 或 xnn @某人
@@ -398,12 +399,18 @@ let processing = false;
  */
 export function handleInferRule(record, ev, selfId, db, bot, log) {
   if (!record || !ev) return false;
-  // 调试日志：记录收到的候选消息（含 @ 检测结果）
+  // 调试日志：异常/命令相关消息必记录，其余按抽样率记录
   try {
     const ats = (ev.message || []).filter((s) => s.type === 'at').map((s) => s.data?.qq);
-    const debug = `[infer][debug] scene=${record.scene} peer=${record.peer_id} user=${record.user_id} ` +
-      `self=${selfId} ats=[${ats.join(',')}] text="${(record.text || '').slice(0, 30)}"`;
-    log.info(debug);
+    const text = record.text || '';
+    const isCmdLike = /^推理/.test(text.replace(/^@[^\s]+\s*/, '').trim()) ||
+                      /^xnn/.test(text.replace(/^@[^\s]+\s*/, '').trim());
+    const isMentionedEvt = isMentioned(ev, selfId);
+    if (isCmdLike || isMentionedEvt || Math.random() < DEBUG_SAMPLE_RATE) {
+      const debug = `[infer][debug] scene=${record.scene} peer=${record.peer_id} user=${record.user_id} ` +
+        `self=${selfId} ats=[${ats.join(',')}] text="${(text || '').slice(0, 30)}"`;
+      log.info(debug);
+    }
   } catch { /* ignore */ }
   // 先判断是否可能命中（私聊触发人 + 群聊@），不命中直接返回
   let possible = false;
