@@ -1,4 +1,4 @@
-# restart-headless.ps1 — 无窗口重启 QQ + NapCat（通用版，路径自动推导，可随目录整体迁移）
+﻿# restart-headless.ps1 — 无窗口重启 QQ + NapCat（通用版，路径自动推导，可随目录整体迁移）
 #
 # QQBot 根查找顺序（首个命中者生效）：
 #   1. 环境变量 $env:QQBOT_ROOT（显式指定，最灵活）

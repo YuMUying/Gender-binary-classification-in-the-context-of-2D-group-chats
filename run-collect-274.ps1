@@ -1,4 +1,4 @@
-# run-collect-274.ps1 — 启动收集器（账号 2740088195 → 群 826904606 + 762673304）
+﻿# run-collect-274.ps1 — 启动收集器（账号 2740088195 → 群 826904606 + 762673304）
 # 路径自动推导：以本脚本所在目录为工程根，无需硬编码盘符
 $ErrorActionPreference = 'Continue'
 $Root = $PSScriptRoot

@@ -1,4 +1,4 @@
-# restart-qq-visible.ps1 — Restart QQ (with NapCat hook) and show its window ASAP to avoid black screen
+﻿# restart-qq-visible.ps1 — Restart QQ (with NapCat hook) and show its window ASAP to avoid black screen
 # 路径自动推导（QQBOT_ROOT 环境变量 > 同级 QQ_bot > H:\QQ_bot）
 $ErrorActionPreference = 'Continue'
 

@@ -19,6 +19,15 @@ import { makeReplyHandler } from './reply.js';
 import { MediaDownloader } from './media.js';
 import { trackContext } from './context.js';
 import { makeLogger } from './utils.js';
+import { handleInferRule, stopInfer } from './infer.js';
+import { normalizeEvent } from './collect.js';
+
+/** 为推理规则构造最小消息记录（不依赖入库） */
+function normalizeEventForInfer(ev) {
+  if (ev.post_type !== 'message' || ev.message_type !== 'private') return null;
+  const rec = normalizeEvent(ev);
+  return rec;
+}
 
 const config = loadConfig();
 const log = makeLogger(config.logging.level);
@@ -56,6 +65,11 @@ function onInserted(record) {
 }
 
 bot.onEvent = (ev) => {
+  // 推理规则优先（私聊指令，无需入库即可响应）
+  const recRaw = normalizeEventForInfer(ev);
+  if (recRaw) {
+    handleInferRule(recRaw, db, bot, log).catch(() => {});
+  }
   if (config.collect.live === false) return;
   const { result, record } = handleLiveEvent(db, config, ev, getGroupNameSync);
   if (result === 'inserted') {
@@ -102,6 +116,7 @@ function shutdown() {
   stopScheduler();
   media.stop();
   bot.close();
+  stopInfer();
   db.close();
   process.exit(0);
 }
