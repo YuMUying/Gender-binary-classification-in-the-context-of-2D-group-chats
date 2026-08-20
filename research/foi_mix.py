@@ -1,16 +1,19 @@
 # -*- coding: utf-8 -*-
-"""foi_mix.py — FOI 混合指数：统计特征指数 × 0.4 + BERT 概率指数 × 0.6
+"""foi_mix.py — FOI 混合指数：统计特征指数 × 0.65 + BERT 概率指数 × 0.35
 
 输入：
   outputs/foi_index.csv    统计特征 FOI（v3，词级区分度）
   outputs/foi_pred.csv     BERT 概率（foi_predict.py 输出，含 p_mean / foi_index）
 输出：
   outputs/foi_final.csv    混合指数（0-100）+ 置信区间 + 消息数 + 标签对照
+
+权重说明：统计特征（词级区分度 2.3×）目前比 BERT（9 样本过拟合）更可靠，
+故统计权重提升至 0.65（2026-08-20 调整）。
 """
 import csv
 
-STAT_W = 0.4   # 统计特征权重
-BERT_W = 0.6   # BERT 训练结果权重（用户要求：权重更倾向于训练结果）
+STAT_W = 0.65  # 统计特征权重（原 0.4，调高因统计更可靠）
+BERT_W = 0.35  # BERT 训练结果权重（原 0.6，相应降低）
 
 def load_csv(path):
     out = {}
