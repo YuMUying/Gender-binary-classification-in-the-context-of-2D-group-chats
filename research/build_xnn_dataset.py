@@ -1,13 +1,14 @@
 # -*- coding: utf-8 -*-
-"""构建 XNN 训练集：10 真实男娘 + 13 大规模伪标签（统计XNN≥50&n≥100）+ 60 正常男
-同时构建 LGBT 独立指数（不训练模型，纯统计）"""
+"""构建 XNN 训练集：真实男娘 + 大规模伪标签（统计XNN>=50 & n>=100）+ 正常男
+每用户采样 cap=500 条（轻量训练）"""
+import collections
 import csv
 import json
 import sqlite3
 
-# 伪标签候选（XNN≥50 & n≥100，未标注）
 PSEUDO_THR = 50
 PSEUDO_MIN_N = 100
+CAP = 500
 
 xnn_map = {}
 with open("outputs/xnn_index.csv", encoding="utf-8") as f:
@@ -37,14 +38,16 @@ for u, (n, x) in xnn_map.items():
 normal_male = set(r["user_id"] for r in conn.execute("SELECT user_id FROM speaker_labels WHERE gender='male'")) - set(pos_real)
 
 print(f"真实阳性: {len(pos_real)} 人")
-print(f"伪标签: {len(pseudo)} 人（XNN≥{PSEUDO_THR}, n≥{PSEUDO_MIN_N}）")
+print(f"伪标签: {len(pseudo)} 人（XNN>={PSEUDO_THR}, n>={PSEUDO_MIN_N}）")
 print(f"正常男: {len(normal_male)} 人")
 
-def rows_for_user(uid, cap=2000):
+
+def rows_for_user(uid, cap=CAP):
     return [dict(r) for r in conn.execute("""
         SELECT user_id, peer_id AS group_id, time, text, CAST(message_id AS TEXT) AS message_id, nickname, card
         FROM messages WHERE user_id=? AND scene IN ('group','private') AND LENGTH(text)>=2
         ORDER BY time ASC""", (uid,)).fetchall()][:cap]
+
 
 def build_row(r, label, extra=None):
     row = {"text": r["text"], "user_id": r["user_id"], "group_id": r["group_id"], "time": r["time"], "label": label}
@@ -56,14 +59,13 @@ def build_row(r, label, extra=None):
         row.update(extra)
     return row
 
-# 训练集
+
 lines = []
 for uid in pos_real:
     for r in rows_for_user(uid):
         lines.append(json.dumps(build_row(r, "foi"), ensure_ascii=False))
 for uid, x in pseudo.items():
     for r in rows_for_user(uid):
-        # 伪标签：软标签 0.6（统计指数高但非人工确认）
         lines.append(json.dumps(build_row(r, "foi", {"pseudo": True, "soft": 0.6}), ensure_ascii=False))
 for uid in normal_male:
     for r in rows_for_user(uid):
@@ -72,8 +74,6 @@ for uid in normal_male:
 with open("data/xnn-train.jsonl", "w", encoding="utf-8") as f:
     f.write("\n".join(lines) + "\n")
 
-# 统计
-import collections
 cnt = collections.Counter()
 for line in lines:
     d = json.loads(line)

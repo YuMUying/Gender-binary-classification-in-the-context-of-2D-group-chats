@@ -45,11 +45,13 @@ for r in rows:
     pred_main = 'female' if p_main is not None and p_main >= main_thr else 'male'
     flips = sum(1 for m in MODELS if ps[m] is not None and
                 (ps[m] >= thr[m]) != (p_main >= main_thr))
+    # 分歧判定：以投票方向为准（模型是否意见相反），P 值 std 不代表分歧
+    # 修正：flip_count==0（全部与主模型一致）→ 低；1 家相反 → 中；≥2 家或平票 → 高
     if votes_m == votes_f:
         disagree = '高'
-    elif flips >= 2 or bstd >= 0.15:
+    elif flips >= 2:
         disagree = '高'
-    elif flips == 1 or bstd >= 0.08:
+    elif flips == 1:
         disagree = '中'
     else:
         disagree = '低'

@@ -69,22 +69,23 @@ class FoiDataset(Dataset):
                                  LABEL_MAP[r["label"]], soft, r))
 
         # 阳性(foi=1)过采样：复制增强，目标把阳性消息量拉到阴性消息量的 target_ratio
+        # 修复：用"数据集实际行数"计算（原用全库消息数导致 copies 过大、训练膨胀数倍）
         if pos_oversample_k > 1.0:
             rng = random.Random(aug_seed)
             pos = [s for s in self.samples if s[2] == 1]
             neg = [s for s in self.samples if s[2] == 0]
-            pos_msgs = sum(self.user_msg_count[s[0]] for s in pos)
-            neg_msgs = sum(self.user_msg_count[s[0]] for s in neg)
-            # target_ratio: 过采样后阳性/阴性消息量目标比例（默认 0.8，即阳性≈阴性80%）
+            pos_rows = len(pos)
+            neg_rows = len(neg)
+            # target_ratio: 过采样后阳性/阴性 行数 目标比例（默认 0.8）
             target_ratio = max(0.4, min(0.8, pos_oversample_k * 0.4))
-            copies = max(1, int(round((neg_msgs / max(1, pos_msgs)) * target_ratio)))
-            copies = min(copies, 12)
+            copies = max(1, int(round((neg_rows / max(1, pos_rows)) * target_ratio)))
+            copies = min(copies, 4)
             extra = []
             for uid, text, y, soft, row in pos:
                 for _ in range(copies - 1):
                     extra.append((uid, text, y, soft, row))
             self.samples.extend(extra)
-            print(f"[过采样] 阳性 {len(pos)} 条 → x{copies} = {len(pos) + len(extra)} 条（阴性 {len(neg)} 条，目标比 {target_ratio:.2f}）")
+            print(f"[过采样] 阳性 {len(pos)} 行 → x{copies} = {len(pos) + len(extra)} 行（阴性 {len(neg)} 行，目标比 {target_ratio:.2f}）")
 
         self.tokenizer = tokenizer
         self.max_len = max_len
