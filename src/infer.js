@@ -25,7 +25,7 @@ const ROOT = path.resolve(__dirname, '..');
 
 // ---- 配置 ----
 const TRIGGER_QQ = 2633083674;          // 私聊触发器
-const GROUP_ID = 826904606;             // 群聊命令启用群
+const GROUP_IDS = [826904606, 1015142523];  // 群聊命令启用群（826904606 主群 + 1015142523 调试小群）
 const RE_PRIVATE = /^推理\s*[:：]?\s*(\d{5,12})/;
 const RE_GROUP_INFER = /^推理\s*[:：]?\s*(?:@?\s*(\d{5,12})|.+)/;   // 推理 <qq> 或 推理 @某人
 const RE_XNN = /^xnn\s*[:：]?\s*(?:@?\s*(\d{5,12})|.+)/;            // xnn <qq> 或 xnn @某人
@@ -266,7 +266,7 @@ async function handlePrivate(record, db, bot, log) {
 // ============================================================
 
 /** 从消息段解析目标 QQ（@ 段优先（跳过机器人自己），其次文本数字） */
-function extractTargetFromEvent(ev, re, selfId) {
+function extractTargetFromEvent(ev, re, selfId, textFallback) {
   const segs = Array.isArray(ev.message) ? ev.message : [];
   // 1) @ 段（非机器人、非 all、非自己）
   for (const s of segs) {
@@ -275,10 +275,13 @@ function extractTargetFromEvent(ev, re, selfId) {
       if (Number.isInteger(qq) && qq >= 10000 && String(qq) !== String(selfId)) return qq;
     }
   }
-  // 2) 纯文本数字（容忍 @bot 前缀）
-  const text = (ev.raw_message ?? '').trim().replace(/^@[^\s]+\s*/, '').trim();
-  const m = text.match(re);
-  if (m && m[1]) return Number(m[1]);
+  // 2) 纯文本数字：优先用 cqToText 产物（record.text，@ 已转名字），其次 raw_message
+  const candidates = [textFallback, ev.raw_message].filter(Boolean);
+  for (const raw of candidates) {
+    const text = String(raw).trim().replace(/^@[^\s]+\s*/, '').trim();
+    const m = text.match(re);
+    if (m && m[1]) return Number(m[1]);
+  }
   return null;
 }
 
@@ -353,7 +356,7 @@ async function buildGroupXnnReply(targetId, db, bot, groupId) {
 
 /** 群聊触发处理 */
 async function handleGroup(record, ev, selfId, db, bot, log) {
-  if (record.peer_id !== GROUP_ID) return false;
+  if (!GROUP_IDS.includes(record.peer_id)) return false;
   if (!isMentioned(ev, selfId)) return false;
   // text 以 "@bot " 开头（cqToText 把 @ 放最前），命令匹配需容忍前缀
   const text = (record.text || '').trim();
@@ -363,7 +366,8 @@ async function handleGroup(record, ev, selfId, db, bot, log) {
   if (!isInfer && !isXnn) return false;
 
   const re = isInfer ? RE_GROUP_INFER : RE_XNN;
-  const targetId = extractTargetFromEvent(ev, re, selfId);
+  const targetId = extractTargetFromEvent(ev, re, selfId, record.text);
+  log.info(`[infer][群聊] ${record.peer_id} @bot ${isInfer ? '推理' : 'xnn'} → target=${targetId ?? '未解析出QQ'}`);
   if (!targetId) return false;
 
   log.info(`[infer][群聊] ${record.peer_id} @bot ${isInfer ? '推理' : 'xnn'} ${targetId}`);
@@ -394,10 +398,17 @@ let processing = false;
  */
 export function handleInferRule(record, ev, selfId, db, bot, log) {
   if (!record || !ev) return false;
+  // 调试日志：记录收到的候选消息（含 @ 检测结果）
+  try {
+    const ats = (ev.message || []).filter((s) => s.type === 'at').map((s) => s.data?.qq);
+    const debug = `[infer][debug] scene=${record.scene} peer=${record.peer_id} user=${record.user_id} ` +
+      `self=${selfId} ats=[${ats.join(',')}] text="${(record.text || '').slice(0, 30)}"`;
+    log.info(debug);
+  } catch { /* ignore */ }
   // 先判断是否可能命中（私聊触发人 + 群聊@），不命中直接返回
   let possible = false;
   if (record.scene === 'private' && record.user_id === TRIGGER_QQ && /^推理/.test(record.text || '')) possible = true;
-  if (record.scene === 'group' && record.peer_id === GROUP_ID && isMentioned(ev, selfId)) {
+  if (record.scene === 'group' && GROUP_IDS.includes(record.peer_id) && isMentioned(ev, selfId)) {
     const stripped = (record.text || '').replace(/^@[^\s]+\s*/, '').trim();
     if (/^推理/.test(stripped) || /^xnn/.test(stripped)) possible = true;
   }
