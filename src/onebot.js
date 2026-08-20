@@ -108,6 +108,14 @@ export class OneBotClient {
     } catch { return { name: null, memberCount: null }; }
   }
 
+  /** 群成员是否存在（用户是否在群内） */
+  async isGroupMember(groupId, userId) {
+    try {
+      const d = await this.callApi('get_group_member_info', { group_id: groupId, user_id: userId, no_cache: false }, 20000);
+      return !!(d && (d.user_id || d.group_id));
+    } catch { return false; }
+  }
+
   sendGroupMessage(groupId, text) {
     return this.callApi('send_group_msg', { group_id: groupId, message: [{ type: 'text', data: { text } }] });
   }

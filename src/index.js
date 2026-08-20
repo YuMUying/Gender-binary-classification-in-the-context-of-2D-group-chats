@@ -22,9 +22,10 @@ import { makeLogger } from './utils.js';
 import { handleInferRule, stopInfer } from './infer.js';
 import { normalizeEvent } from './collect.js';
 
-/** 为推理规则构造最小消息记录（不依赖入库） */
+/** 为推理规则构造最小消息记录（不依赖入库；私聊/群聊均可） */
 function normalizeEventForInfer(ev) {
-  if (ev.post_type !== 'message' || ev.message_type !== 'private') return null;
+  if (ev.post_type !== 'message') return null;
+  if (ev.message_type !== 'private' && ev.message_type !== 'group') return null;
   const rec = normalizeEvent(ev);
   return rec;
 }
@@ -65,10 +66,10 @@ function onInserted(record) {
 }
 
 bot.onEvent = (ev) => {
-  // 推理规则优先（私聊指令，无需入库即可响应）
+  // 推理规则优先（私聊指令/群聊@命令，无需入库即可响应）
   const recRaw = normalizeEventForInfer(ev);
   if (recRaw) {
-    handleInferRule(recRaw, db, bot, log).catch(() => {});
+    try { handleInferRule(recRaw, ev, ev.self_id, db, bot, log); } catch (e) { log.warn(`[infer] 触发异常: ${e.message}`); }
   }
   if (config.collect.live === false) return;
   const { result, record } = handleLiveEvent(db, config, ev, getGroupNameSync);

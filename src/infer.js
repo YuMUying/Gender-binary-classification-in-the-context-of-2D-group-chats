@@ -1,15 +1,19 @@
 /**
- * infer.js — 私聊性别推理响应
+ * infer.js — 性别推理响应（私聊 + 群聊）
  *
- * 触发：私聊来自 2633083674，文本匹配 /^推理\s+(\d+)/（如 "推理 2673619125"）
+ * 【私聊规则】（原有，不改）
+ *   触发：私聊来自 2633083674，文本匹配 /^推理\s+(\d+)/
+ *   输出：性别/概率/置信度/是否已标注(含标签)/分歧指数；男或标注男附男娘指数
  *
- * 流程：
- *   1. 从 DB 取目标用户最新入库的 N 条消息（ORDER BY collected_at DESC = 新入库优先）
- *   2. 交给常驻 Python 子进程（train/infer_one.py + bert-v10-wb）实时推理
- *   3. 超时（INFER_TIMEOUT_MS，默认 30s）→ 降级用 outputs/score-multi-v10.csv 静态结果
- *   4. DB 无该用户消息 → 回复"无用户数据"
- *   5. 输出：性别结论 / P(女) 概率 / 置信度 / 是否已标注 / 分歧指数；
- *      男性附加男娘指数（FOI，无 Kalman 平滑版 = foi_final.csv 的混合值）
+ * 【群聊规则】（826904606，机器人被@才触发）
+ *   命令1：推理 <QQ号> 或 推理 @某人
+ *     - 目标必须在群内（get_group_member_info 校验），不在群 → 无数据
+ *     - 输出：性别/概率/置信度/是否已标注(仅是否)/分歧指数；不含男娘指数
+ *     - 模型判女 → 直接回复"模型判女"+概率+置信度
+ *   命令2：xnn <QQ号> 或 xnn @某人
+ *     - 输出男娘指数（无 Kalman 平滑版）
+ *
+ * 【并发控制】所有命令按消息到达时间戳入队，串行处理（时间戳顺序）。
  */
 import { spawn } from 'node:child_process';
 import { readFileSync, existsSync } from 'node:fs';
@@ -19,14 +23,19 @@ import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 
-const TRIGGER_QQ = 2633083674;          // 只有这个号发的私聊触发
-const RE = /^推理\s*[:：]?\s*(\d{5,12})/;
-const SAMPLE_N = 100;                    // 采样最新 N 条消息
-const INFER_TIMEOUT_MS = 30000;          // 推理超时（超时降级静态结果）
-const V10_WB_THRESHOLD = 0.73;           // bert-v10-wb 阈值
+// ---- 配置 ----
+const TRIGGER_QQ = 2633083674;          // 私聊触发器
+const GROUP_ID = 826904606;             // 群聊命令启用群
+const RE_PRIVATE = /^推理\s*[:：]?\s*(\d{5,12})/;
+const RE_GROUP_INFER = /^推理\s*[:：]?\s*(?:@?\s*(\d{5,12})|.+)/;   // 推理 <qq> 或 推理 @某人
+const RE_XNN = /^xnn\s*[:：]?\s*(?:@?\s*(\d{5,12})|.+)/;            // xnn <qq> 或 xnn @某人
+const SAMPLE_N = 100;
+const INFER_TIMEOUT_MS = 30000;
+const V10_WB_THRESHOLD = 0.73;
 
-let py = null;                           // 常驻 Python 子进程
-let pyQueue = [];                        // 等待响应的回调队列
+// ---- Python 推理子进程 ----
+let py = null;
+let pyQueue = [];
 let pyReady = false;
 
 /** 加载静态结果表（score-multi-v10.csv 缓存） */
@@ -93,13 +102,13 @@ function ensurePy() {
       try { obj = JSON.parse(line); } catch { continue; }
       if (obj.ready) {
         pyReady = true;
-        continue;   // ready 消息不消费业务回调
+        continue;
       }
       const cb = pyQueue.shift();
       if (cb) cb(obj);
     }
   });
-  py.stderr.on('data', (d) => { /* 保留静默，错误在超时兜底 */ });
+  py.stderr.on('data', () => { /* 静默 */ });
   py.on('exit', () => {
     py = null; pyReady = false;
     const pend = pyQueue; pyQueue = [];
@@ -112,10 +121,7 @@ function ensurePy() {
 function inferRequest(req, timeoutMs) {
   return new Promise((resolve) => {
     ensurePy();
-    const cb = (obj) => {
-      clearTimeout(timer);
-      resolve(obj);
-    };
+    const cb = (obj) => { clearTimeout(timer); resolve(obj); };
     const timer = setTimeout(() => {
       const i = pyQueue.indexOf(cb);
       if (i >= 0) pyQueue.splice(i, 1);
@@ -135,10 +141,7 @@ function inferRequest(req, timeoutMs) {
     if (pyReady) {
       doWrite();
     } else {
-      // 等待 ready（最多 30s），期间若进程退出会由 exit 回调兜底
-      const t = setInterval(() => {
-        if (pyReady) { clearInterval(t); doWrite(); }
-      }, 100);
+      const t = setInterval(() => { if (pyReady) { clearInterval(t); doWrite(); } }, 100);
       setTimeout(() => clearInterval(t), 30000);
     }
   });
@@ -157,110 +160,273 @@ function getLabel(db, userId) {
   return db.prepare('SELECT gender, label_confidence, orientation FROM speaker_labels WHERE user_id=?').get(userId) ?? null;
 }
 
-/** 置信度判定（实时推理版）：样本充足 + 概率远离阈值 → high */
+/** 置信度判定 */
 function confidenceFor(p, n) {
   if (n < 20) return 'low-data（样本不足）';
   if (Math.abs(p - V10_WB_THRESHOLD) < 0.15) return 'borderline（临界）';
   return 'high';
 }
 
-/**
- * 处理一条私聊消息。返回是否命中规则。
- * @param {object} record 规范化消息记录
- * @param {object} db
- * @param {object} bot   OneBotClient（发送回复用）
- * @param {object} log
- */
-export async function handleInferRule(record, db, bot, log) {
-  if (record.scene !== 'private') return false;
-  if (record.user_id !== TRIGGER_QQ) return false;
-  const text = (record.text || '').trim();
-  const m = text.match(RE);
-  if (!m) return false;
-
-  const targetId = Number(m[1]);
-  log.info(`[infer] ${TRIGGER_QQ} 请求推理 ${targetId}`);
-  const reply = await buildReply(targetId, db);
-  try {
-    if (record.peer_id) await bot.callApi('send_private_msg', { user_id: record.peer_id, message: reply });
-    log.info(`[infer] → ${record.peer_id}: ${reply.slice(0, 60)}`);
-  } catch (e) {
-    log.warn(`[infer] 发送失败: ${e.message}`);
-  }
-  return true;
+/** 分歧指数（静态表） */
+function loadDisagreement(userId) {
+  const st = loadStaticScores().get(userId);
+  return st?.disagreement ?? '未知';
 }
 
-/** 组装推理回复文本 */
-export async function buildReply(targetId, db) {
+/** 男娘指数（无 Kalman） */
+function loadFoiValue(userId) {
+  const foi = loadFoiMap().get(String(userId));
+  const v = foi ? Number(foi.foi_index) : null;
+  if (v == null || isNaN(v)) return null;
+  return v;
+}
+
+/** 执行一次推理，返回 {p, nUsed, source} 或抛错/返回错误文本 */
+async function runInference(targetId, db) {
   const msgs = latestMessages(db, targetId, SAMPLE_N);
-  const label = getLabel(db, targetId);
-
-  if (!msgs.length) {
-    return `【推理 ${targetId}】\n无用户数据（数据库中无该用户的消息记录）`;
-  }
-
-  // 1) 实时推理（新入库消息采样），带超时降级
-  let p = null, nUsed = msgs.length, source = '实时采样';
+  if (!msgs.length) return { noData: true };
   const req = {
     texts: msgs.map((m) => m.text),
     nicknames: msgs.map((m) => m.nickname ?? null),
   };
   const res = await inferRequest(req, INFER_TIMEOUT_MS);
   if (res && typeof res.p_female === 'number') {
-    p = res.p_female;
-    nUsed = res.n ?? nUsed;
-    source = `实时采样${nUsed}条(${res.t_ms}ms)`;
-  } else if (res?.timeout) {
-    // 2) 超时降级：静态结果
+    return { p: res.p_female, nUsed: res.n ?? msgs.length, source: `实时采样${res.n ?? msgs.length}条(${res.t_ms}ms)` };
+  }
+  if (res?.timeout) {
     const st = loadStaticScores().get(String(targetId));
     if (st && st.p_bert_v10_wb) {
-      p = Number(st.p_bert_v10_wb);
-      source = `超时降级-静态(历史${st.n_messages}条)`;
-    } else {
-      return `【推理 ${targetId}】\n推理超时且无静态结果，请稍后重试`;
+      return { p: Number(st.p_bert_v10_wb), nUsed: Number(st.n_messages) || 0, source: `超时降级-静态(历史${st.n_messages}条)` };
     }
-  } else {
-    return `【推理 ${targetId}】\n推理进程异常：${res?.error ?? '未知错误'}`;
+    return { errorText: '推理超时且无静态结果，请稍后重试' };
   }
+  return { errorText: `推理进程异常：${res?.error ?? '未知错误'}` };
+}
 
-  // 3) 组装结果
+// ============================================================
+// 私聊规则（原有，不变）
+// ============================================================
+
+/** 组装私聊推理回复文本（含男娘指数） */
+export async function buildReply(targetId, db) {
+  const label = getLabel(db, targetId);
+  const r = await runInference(targetId, db);
+  if (r.noData) return `【推理 ${targetId}】\n无用户数据（数据库中无该用户的消息记录）`;
+  if (r.errorText) return `【推理 ${targetId}】\n${r.errorText}`;
+
+  const p = r.p;
   const gender = p >= V10_WB_THRESHOLD ? '女' : '男';
-  const conf = confidenceFor(p, nUsed);
+  const conf = confidenceFor(p, r.nUsed);
   const labeled = label ? `是（${label.gender}${label.orientation ? `/${label.orientation}` : ''}）` : '否';
   const disagreement = loadDisagreement(String(targetId));
 
-  let lines = [
+  const lines = [
     `【推理 ${targetId}】`,
     `性别结论：${gender}`,
     `P(女)：${(p * 100).toFixed(1)}%`,
     `置信度：${conf}`,
     `是否已标注：${labeled}`,
     `分歧指数：${disagreement}`,
-    `数据来源：${source}`,
+    `数据来源：${r.source}`,
   ];
 
-  // 4) 男娘指数：模型判男 → 输出；模型判女但已标注为男 → 也输出（"男声女气"需男娘信号辅助）
   const labeledMale = label && (label.gender === 'male');
   if (gender === '男' || labeledMale) {
-    const foi = loadFoiMap().get(String(targetId));
-    const foiVal = foi ? Number(foi.foi_index) : null;
-    if (foiVal != null && !isNaN(foiVal)) {
+    const foiVal = loadFoiValue(targetId);
+    if (foiVal != null) {
       const tip = foiVal >= 80 ? '（男娘信号强）' : foiVal >= 60 ? '（男娘信号中）' : foiVal >= 45 ? '（男娘信号弱）' : '';
       lines.push(`男娘指数：${foiVal.toFixed(0)}/100${tip}`);
     } else {
       lines.push('男娘指数：无数据（样本不足或未计算）');
     }
   }
-
   return lines.join('\n');
 }
 
-/** 分歧指数（静态表 disagreement 字段） */
-function loadDisagreement(userId) {
-  const st = loadStaticScores().get(userId);
-  return st?.disagreement ?? '未知';
+/** 私聊触发处理（原逻辑） */
+async function handlePrivate(record, db, bot, log) {
+  if (record.user_id !== TRIGGER_QQ) return false;
+  const text = (record.text || '').trim();
+  const m = text.match(RE_PRIVATE);
+  if (!m) return false;
+  const targetId = Number(m[1]);
+  log.info(`[infer][私聊] ${TRIGGER_QQ} 请求推理 ${targetId}`);
+  const reply = await buildReply(targetId, db);
+  try {
+    if (record.peer_id) await bot.callApi('send_private_msg', { user_id: record.peer_id, message: reply });
+    log.info(`[infer][私聊] → ${record.peer_id}: ${reply.split('\n')[0]}`);
+  } catch (e) {
+    log.warn(`[infer][私聊] 发送失败: ${e.message}`);
+  }
+  return true;
+}
+
+// ============================================================
+// 群聊规则（826904606，机器人被@才触发）
+// ============================================================
+
+/** 从消息段解析目标 QQ（@ 段优先（跳过机器人自己），其次文本数字） */
+function extractTargetFromEvent(ev, re, selfId) {
+  const segs = Array.isArray(ev.message) ? ev.message : [];
+  // 1) @ 段（非机器人、非 all、非自己）
+  for (const s of segs) {
+    if (s.type === 'at' && s.data?.qq && s.data.qq !== 'all') {
+      const qq = Number(s.data.qq);
+      if (Number.isInteger(qq) && qq >= 10000 && String(qq) !== String(selfId)) return qq;
+    }
+  }
+  // 2) 纯文本数字（容忍 @bot 前缀）
+  const text = (ev.raw_message ?? '').trim().replace(/^@[^\s]+\s*/, '').trim();
+  const m = text.match(re);
+  if (m && m[1]) return Number(m[1]);
+  return null;
+}
+
+/** 消息是否 @ 了机器人 */
+function isMentioned(ev, selfId) {
+  const segs = Array.isArray(ev.message) ? ev.message : [];
+  for (const s of segs) {
+    if (s.type === 'at' && (String(s.data?.qq) === String(selfId) || s.data?.qq === 'all')) return true;
+  }
+  return false;
+}
+
+/** 群聊推理回复（判女直说、标注仅是否、无男娘指数） */
+async function buildGroupInferReply(targetId, db, bot, groupId) {
+  // 1) 群成员校验
+  const inGroup = await bot.isGroupMember(groupId, targetId);
+  if (!inGroup) {
+    return `【推理 ${targetId}】\n无数据（该用户不在本群）`;
+  }
+  const label = getLabel(db, targetId);
+  const r = await runInference(targetId, db);
+  if (r.noData) return `【推理 ${targetId}】\n无用户数据（数据库中无该用户的消息记录）`;
+  if (r.errorText) return `【推理 ${targetId}】\n${r.errorText}`;
+
+  const p = r.p;
+  const gender = p >= V10_WB_THRESHOLD ? '女' : '男';
+  const conf = confidenceFor(p, r.nUsed);
+  const labeled = label ? '是' : '否';
+  const disagreement = loadDisagreement(String(targetId));
+
+  // 模型判女 → 直接回复模型判女 + 概率 + 置信度
+  if (gender === '女') {
+    return [
+      `【推理 ${targetId}】`,
+      `模型判女`,
+      `P(女)：${(p * 100).toFixed(1)}%`,
+      `置信度：${conf}`,
+      `是否已标注：${labeled}`,
+      `分歧指数：${disagreement}`,
+    ].join('\n');
+  }
+
+  return [
+    `【推理 ${targetId}】`,
+    `性别结论：${gender}`,
+    `P(女)：${(p * 100).toFixed(1)}%`,
+    `置信度：${conf}`,
+    `是否已标注：${labeled}`,
+    `分歧指数：${disagreement}`,
+    `数据来源：${r.source}`,
+  ].join('\n');
+}
+
+/** 群聊 xnn 回复（男娘指数） */
+async function buildGroupXnnReply(targetId, db, bot, groupId) {
+  const inGroup = await bot.isGroupMember(groupId, targetId);
+  if (!inGroup) {
+    return `【xnn ${targetId}】\n无数据（该用户不在本群）`;
+  }
+  const label = getLabel(db, targetId);
+  const foiVal = loadFoiValue(targetId);
+  const hasMsgs = latestMessages(db, targetId, 1).length > 0;
+  if (!hasMsgs) return `【xnn ${targetId}】\n无用户数据（数据库中无该用户的消息记录）`;
+  if (foiVal == null) return `【xnn ${targetId}】\n男娘指数：无数据（样本不足或未计算）`;
+  const tip = foiVal >= 80 ? '（男娘信号强）' : foiVal >= 60 ? '（男娘信号中）' : foiVal >= 45 ? '（男娘信号弱）' : '';
+  return [
+    `【xnn ${targetId}】`,
+    `男娘指数：${foiVal.toFixed(0)}/100${tip}`,
+    `是否已标注：${label ? '是' : '否'}`,
+  ].join('\n');
+}
+
+/** 群聊触发处理 */
+async function handleGroup(record, ev, selfId, db, bot, log) {
+  if (record.peer_id !== GROUP_ID) return false;
+  if (!isMentioned(ev, selfId)) return false;
+  // text 以 "@bot " 开头（cqToText 把 @ 放最前），命令匹配需容忍前缀
+  const text = (record.text || '').trim();
+  const stripped = text.replace(/^@[^\s]+\s*/, '').trim();   // 去掉 @bot 前缀
+  const isInfer = /^推理/.test(stripped);
+  const isXnn = /^xnn/.test(stripped);
+  if (!isInfer && !isXnn) return false;
+
+  const re = isInfer ? RE_GROUP_INFER : RE_XNN;
+  const targetId = extractTargetFromEvent(ev, re, selfId);
+  if (!targetId) return false;
+
+  log.info(`[infer][群聊] ${record.peer_id} @bot ${isInfer ? '推理' : 'xnn'} ${targetId}`);
+  const reply = isInfer
+    ? await buildGroupInferReply(targetId, db, bot, record.peer_id)
+    : await buildGroupXnnReply(targetId, db, bot, record.peer_id);
+  try {
+    await bot.sendGroupMessage(record.peer_id, reply);
+    log.info(`[infer][群聊] → ${record.peer_id}: ${reply.split('\n')[0]}`);
+  } catch (e) {
+    log.warn(`[infer][群聊] 发送失败: ${e.message}`);
+  }
+  return true;
+}
+
+// ============================================================
+// 统一入口 + 时间戳顺序队列（防并发）
+// ============================================================
+
+let cmdQueue = [];       // {ts, record, ev, selfId}
+let processing = false;
+
+/**
+ * 统一入口：检测并处理推理命令（私聊/群聊）。按消息时间戳入队，串行执行。
+ * @param {object} record  规范化消息记录（scene/user_id/peer_id/text/time）
+ * @param {object} ev      原始 OneBot 事件（含 message 段，用于 @ 解析）
+ * @param {number} selfId  机器人自身 QQ（@ 检测用）
+ */
+export function handleInferRule(record, ev, selfId, db, bot, log) {
+  if (!record || !ev) return false;
+  // 先判断是否可能命中（私聊触发人 + 群聊@），不命中直接返回
+  let possible = false;
+  if (record.scene === 'private' && record.user_id === TRIGGER_QQ && /^推理/.test(record.text || '')) possible = true;
+  if (record.scene === 'group' && record.peer_id === GROUP_ID && isMentioned(ev, selfId)) {
+    const stripped = (record.text || '').replace(/^@[^\s]+\s*/, '').trim();
+    if (/^推理/.test(stripped) || /^xnn/.test(stripped)) possible = true;
+  }
+  if (!possible) return false;
+
+  cmdQueue.push({ ts: record.time ?? Date.now(), record, ev, selfId });
+  cmdQueue.sort((a, b) => a.ts - b.ts);   // 按时间戳排序
+  if (!processing) drainQueue(db, bot, log);
+  return true;
+}
+
+async function drainQueue(db, bot, log) {
+  processing = true;
+  while (cmdQueue.length) {
+    const { record, ev, selfId } = cmdQueue.shift();
+    try {
+      if (record.scene === 'private') {
+        await handlePrivate(record, db, bot, log);
+      } else if (record.scene === 'group') {
+        await handleGroup(record, ev, selfId, db, bot, log);
+      }
+    } catch (e) {
+      log.warn(`[infer] 处理失败: ${e.message}`);
+    }
+  }
+  processing = false;
 }
 
 export function stopInfer() {
   if (py) { try { py.kill(); } catch { /* ignore */ } py = null; }
+  cmdQueue = [];
 }
