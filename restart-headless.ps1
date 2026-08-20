@@ -41,6 +41,27 @@ $env:NAPCAT_INJECT_PATH = Join-Path $NapCatNap 'NapCatWinBootHook.dll'
 $env:NAPCAT_LAUNCHER_PATH = Join-Path $NapCatNap 'NapCatWinBootMain.exe'
 $env:NAPCAT_MAIN_PATH = (Join-Path $NapCatNap 'napcat.mjs').Replace('\', '/')
 
+# 动态生成 loadNapCat.js（与 launcher.bat 一致）：指向 napcat.mjs 绝对路径
+$loadJs = Join-Path $NapCatNap 'loadNapCat.js'
+$mainJs = (Join-Path $NapCatNap 'napcat.mjs').Replace('\', '/')
+"(async () => {await import(""file:///$mainJs"")})()" | Out-File -FilePath $loadJs -Encoding utf8
+
+# ---- 密码自动登录（读取本地敏感配置，不入 Git） ----
+$loginEnv = Join-Path $PSScriptRoot 'napcat-login.env'
+if (Test-Path $loginEnv) {
+  Get-Content $loginEnv | ForEach-Object {
+    $line = $_.Trim()
+    if ($line -and -not $line.StartsWith('#') -and $line.Contains('=')) {
+      $k = $line.Substring(0, $line.IndexOf('=')).Trim()
+      $v = $line.Substring($line.IndexOf('=') + 1).Trim()
+      if ($k -and $v) { Set-Item -Path "Env:$k" -Value $v }
+    }
+  }
+  Write-Host "自动登录已配置: $env:NAPCAT_QUICK_ACCOUNT"
+} else {
+  Write-Host '未找到 napcat-login.env，跳过密码自动登录（需手动扫码）'
+}
+
 Write-Host '2) Starting BootMain (headless, no window shown) ...'
 Start-Process -FilePath (Join-Path $NapCatNap 'NapCatWinBootMain.exe') `
   -ArgumentList "`"$QQExe`" `"$(Join-Path $NapCatNap 'NapCatWinBootHook.dll')`"" `

@@ -80,22 +80,24 @@ function onebotOk(port) {
   }).then(r => r.json()).then(j => j?.status === 'ok').catch(() => false);
 }
 
-// 触发 MSF 网络活性：对每个活跃群强制刷新成员列表（走服务器）
+// 触发 MSF 网络活性：对每个活跃群调用 mark_msg_as_read（内核已读模拟）
+// 与 get_group_member_list 相比：这是"用户查看消息"的真实行为信号，
+// 服务器看到的是正常拉取/已读流量而非只读 API 探测。
 async function refreshActivity() {
   let ok = false;
   for (const gid of ACCT.activeGroups) {
     try {
-      const r = await fetch(`http://127.0.0.1:${ACCT.onebotPort}/get_group_member_list`, {
+      const r = await fetch(`http://127.0.0.1:${ACCT.onebotPort}/mark_msg_as_read`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ group_id: gid, no_cache: true }),
+        body: JSON.stringify({ group_id: gid }),
         signal: AbortSignal.timeout(15000),
       });
       const j = await r.json();
-      const n = Array.isArray(j?.data) ? j.data.length : 0;
-      log(`活性触发: get_group_member_list(no_cache) 群${gid} → ${n} 成员（MSF 会话保持）`);
-      if (n > 0) ok = true;
+      const success = j?.status === 'ok';
+      log(`已读模拟: mark_msg_as_read 群${gid} → ${success ? 'OK' : j?.wording ?? j?.msg ?? '失败'}`);
+      if (success) ok = true;
     } catch (e) {
-      log(`活性触发 群${gid} 失败: ${e.message}`);
+      log(`已读模拟 群${gid} 失败: ${e.message}`);
     }
   }
   return ok;
