@@ -27,7 +27,7 @@ const ROOT = path.resolve(__dirname, '..');
 const TRIGGER_QQ = 2633083674;          // 私聊触发器
 const GROUP_IDS = [826904606, 1015142523];  // 群聊命令启用群（826904606 主群 + 1015142523 调试小群）
 const DEBUG_SAMPLE_RATE = 0.05;         // debug 日志抽样率（所有消息 5% 记录）
-const RE_PRIVATE = /^推理\s*[:：]?\s*(\d{5,12})/;
+const RE_PRIVATE = /^(推理|xnn)\s*[:：]?\s*(\d{5,12})/;
 const RE_GROUP_INFER = /^推理\s*[:：]?\s*(?:@?\s*(\d{5,12})|.+)/;   // 推理 <qq> 或 推理 @某人
 const RE_XNN = /^xnn\s*[:：]?\s*(?:@?\s*(\d{5,12})|.+)/;            // xnn <qq> 或 xnn @某人
 const SAMPLE_N = 100;
@@ -275,15 +275,38 @@ export async function buildReply(targetId, db) {
   return lines.join('\n');
 }
 
-/** 私聊触发处理（原逻辑） */
+/** 私聊触发处理（推理 + xnn） */
 async function handlePrivate(record, db, bot, log) {
   if (record.user_id !== TRIGGER_QQ) return false;
   const text = (record.text || '').trim();
   const m = text.match(RE_PRIVATE);
   if (!m) return false;
-  const targetId = Number(m[1]);
-  log.info(`[infer][私聊] ${TRIGGER_QQ} 请求推理 ${targetId}`);
-  const reply = await buildReply(targetId, db);
+  const cmd = m[1];                     // 推理 | xnn
+  const targetId = Number(m[2]);
+  log.info(`[infer][私聊] ${TRIGGER_QQ} 请求 ${cmd} ${targetId}`);
+  let reply;
+  if (cmd === 'xnn') {
+    // 私聊 xnn：只返回男娘指数
+    const label = getLabel(db, targetId);
+    const hasMsgs = latestMessages(db, targetId, 1).length > 0;
+    if (!hasMsgs) {
+      reply = `【xnn ${targetId}】\n无用户数据（数据库中无该用户的消息记录）`;
+    } else {
+      const foiVal = loadFoiValue(targetId);
+      if (foiVal == null) {
+        reply = `【xnn ${targetId}】\n男娘指数：无数据（样本不足或未计算）`;
+      } else {
+        const tip = foiVal >= 80 ? '（男娘信号强）' : foiVal >= 60 ? '（男娘信号中）' : foiVal >= 45 ? '（男娘信号弱）' : '';
+        reply = [
+          `【xnn ${targetId}】`,
+          `男娘指数：${foiVal.toFixed(0)}/100${tip}`,
+          `是否已标注：${label ? '是' : '否'}`,
+        ].join('\n');
+      }
+    }
+  } else {
+    reply = await buildReply(targetId, db);
+  }
   try {
     if (record.peer_id) await bot.callApi('send_private_msg', { user_id: record.peer_id, message: reply });
     log.info(`[infer][私聊] → ${record.peer_id}: ${reply.split('\n')[0]}`);
@@ -445,7 +468,8 @@ export function handleInferRule(record, ev, selfId, db, bot, log) {
   } catch { /* ignore */ }
   // 先判断是否可能命中（私聊触发人 + 群聊@），不命中直接返回
   let possible = false;
-  if (record.scene === 'private' && record.user_id === TRIGGER_QQ && /^推理/.test(record.text || '')) possible = true;
+  if (record.scene === 'private' && record.user_id === TRIGGER_QQ &&
+      /^(推理|xnn)/.test(record.text || '')) possible = true;
   if (record.scene === 'group' && GROUP_IDS.includes(record.peer_id) && isMentioned(ev, selfId)) {
     const stripped = (record.text || '').replace(/^@[^\s]+\s*/, '').trim();
     if (/^推理/.test(stripped) || /^xnn/.test(stripped)) possible = true;

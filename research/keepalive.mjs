@@ -193,24 +193,30 @@ async function main() {
       log(`✓ 收集器写入恢复`);
     }
 
-    // 3) 断流处理
-    if (svc && ageMin > STALL_MIN && !stallWarned) {
-      stallWarned = true;
-      log(`⚠ 消息流停滞 ${ageMin.toFixed(0)} 分钟（服务活着）——${ARGS.noRestart ? '仅告警' : '将尝试重启'}`);
-      if (!ARGS.noRestart && now - lastRestart > RESTART_COOLDOWN) {
-        lastRestart = now;
-        await restartHeadless();
-      } else if (!ARGS.noRestart) {
-        log(`  距上次重启 ${((now - lastRestart) / 3600000).toFixed(1)}h，冷却期内跳过`);
+    // 3) 断流处理（自动重启独立于告警标志——修复：stallWarned 置位后重启分支被永久跳过）
+    if (ageMin > STALL_MIN) {
+      if (svc) {
+        const msg = `消息流停滞 ${ageMin.toFixed(0)} 分钟（服务活着）——${ARGS.noRestart ? '仅告警' : '将尝试重启'}`;
+        if (!stallWarned) { stallWarned = true; log(`⚠ ${msg}`); }
+        if (!ARGS.noRestart && now - lastRestart > RESTART_COOLDOWN) {
+          lastRestart = now;
+          log(`→ 执行自动重启（距上次 ${((now - lastRestart) / 3600000).toFixed(1)}h）`);
+          await restartHeadless();
+        } else if (!ARGS.noRestart) {
+          log(`  距上次重启 ${((now - lastRestart) / 3600000).toFixed(1)}h，冷却期内跳过`);
+        }
+      } else {
+        const msg = `服务层也挂 + 消息流停滞——${ARGS.noRestart ? '仅告警' : '将尝试重启'}`;
+        if (!stallWarned) { stallWarned = true; log(`⚠ ${msg}`); }
+        if (!ARGS.noRestart && now - lastRestart > RESTART_COOLDOWN) {
+          lastRestart = now;
+          log(`→ 执行自动重启（服务层挂）`);
+          await restartHeadless();
+        }
       }
-    }
-    if (!svc && ageMin > STALL_MIN && !stallWarned) {
-      stallWarned = true;
-      log(`⚠ 服务层也挂 + 消息流停滞——${ARGS.noRestart ? '仅告警' : '将尝试重启'}`);
-      if (!ARGS.noRestart && now - lastRestart > RESTART_COOLDOWN) {
-        lastRestart = now;
-        await restartHeadless();
-      }
+    } else if (stallWarned) {
+      stallWarned = false;
+      log(`✓ 消息流恢复（停滞后重新有消息）`);
     }
 
     await sleep(60000);
