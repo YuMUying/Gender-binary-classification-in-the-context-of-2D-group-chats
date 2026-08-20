@@ -60,11 +60,11 @@ function loadStaticScores() {
   return staticScores;
 }
 
-/** 加载 FOI 混合指数表（无 Kalman 平滑版） */
+/** 加载 XNN 男娘指数表（v4 独立指数） */
 let foiMap = null;
 function loadFoiMap() {
   if (foiMap) return foiMap;
-  const p = path.join(ROOT, 'outputs', 'foi_final.csv');
+  const p = path.join(ROOT, 'outputs', 'xnn_index.csv');
   foiMap = new Map();
   if (!existsSync(p)) return foiMap;
   try {
@@ -75,10 +75,33 @@ function loadFoiMap() {
       if (vals.length < cols.length) continue;
       const row = {};
       cols.forEach((c, j) => (row[c.trim()] = vals[j]?.trim() ?? ''));
-      if (row.user_id) foiMap.set(row.user_id, row);
+      const uid = row['QQ号'] ?? row.user_id;
+      if (uid) foiMap.set(String(uid), row);
     }
   } catch (e) { /* ignore */ }
   return foiMap;
+}
+
+/** 加载 LGBT 小众性取向指数表（v4 独立指数） */
+let lgbtMap = null;
+function loadLgbtMap() {
+  if (lgbtMap) return lgbtMap;
+  const p = path.join(ROOT, 'outputs', 'lgbt_index.csv');
+  lgbtMap = new Map();
+  if (!existsSync(p)) return lgbtMap;
+  try {
+    const lines = readFileSync(p, 'utf8').split('\n');
+    const cols = lines[0].trim().split(',');
+    for (let i = 1; i < lines.length; i++) {
+      const vals = lines[i].trim().split(',');
+      if (vals.length < cols.length) continue;
+      const row = {};
+      cols.forEach((c, j) => (row[c.trim()] = vals[j]?.trim() ?? ''));
+      const uid = row['QQ号'] ?? row.user_id;
+      if (uid) lgbtMap.set(String(uid), row);
+    }
+  } catch (e) { /* ignore */ }
+  return lgbtMap;
 }
 
 /** 常驻 Python 推理子进程（懒启动） */
@@ -174,10 +197,18 @@ function loadDisagreement(userId) {
   return st?.disagreement ?? '未知';
 }
 
-/** 男娘指数（无 Kalman） */
+/** 男娘指数（XNN，v4 独立指数） */
 function loadFoiValue(userId) {
   const foi = loadFoiMap().get(String(userId));
-  const v = foi ? Number(foi.foi_index) : null;
+  const v = foi ? Number(foi.XNN男娘指数 ?? foi.foi_index) : null;
+  if (v == null || isNaN(v)) return null;
+  return v;
+}
+
+/** LGBT 小众性取向指数（v4 独立指数） */
+function loadLgbtValue(userId) {
+  const lgbt = loadLgbtMap().get(String(userId));
+  const v = lgbt ? Number(lgbt.LGBT小众性取向指数) : null;
   if (v == null || isNaN(v)) return null;
   return v;
 }
