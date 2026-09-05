@@ -15,11 +15,9 @@ import { OneBotClient } from './onebot.js';
 import { handleLiveEvent } from './collect.js';
 import { backfillPeer } from './backfill.js';
 import { startScheduler } from './scheduler.js';
-import { makeReplyHandler } from './reply.js';
 import { MediaDownloader } from './media.js';
 import { trackContext } from './context.js';
 import { makeLogger } from './utils.js';
-import { handleInferRule, stopInfer } from './infer.js';
 import { makeLlmHandler } from './llm/handler.js';
 import { normalizeEvent } from './collect.js';
 
@@ -36,7 +34,6 @@ const log = makeLogger(config.logging.level);
 const db = openDb(config.database);
 
 const bot = new OneBotClient(config.onebot, log);
-const replyHandler = makeReplyHandler(config, bot, log);
 
 // AI 助手（LLM 私聊聊天）：config/llm.json 不存在或 enabled=false 时自动关闭
 let llmHandler = null;
@@ -76,13 +73,9 @@ function onInserted(record) {
 }
 
 bot.onEvent = (ev) => {
-  // 推理规则优先（私聊指令/群聊@命令，无需入库即可响应）
+  // AI 助手（LLM 私聊聊天；内部自过滤白名单）——唯一的机器人回复功能
   const recRaw = normalizeEventForInfer(ev);
-  if (recRaw) {
-    try { handleInferRule(recRaw, ev, ev.self_id, db, bot, log); } catch (e) { log.warn(`[infer] 触发异常: ${e.message}`); }
-    // AI 助手（LLM 私聊聊天；内部自过滤白名单/指令，推理前缀让位 infer.js）
-    if (llmHandler) llmHandler.handle(recRaw);
-  }
+  if (recRaw && llmHandler) llmHandler.handle(recRaw);
   if (config.collect.live === false) return;
   const { result, record } = handleLiveEvent(db, config, ev, getGroupNameSync);
   if (result === 'inserted') {
@@ -92,7 +85,6 @@ bot.onEvent = (ev) => {
     }
     if (record.scene === 'group') warmGroupName(record.peer_id);
     onInserted(record);
-    replyHandler(record).catch(() => {});
   } else if (result === 'dup') {
     liveDup++;
   }
@@ -141,7 +133,6 @@ function shutdown() {
   stopScheduler();
   media.stop();
   bot.close();
-  stopInfer();
   db.close();
   process.exit(0);
 }
