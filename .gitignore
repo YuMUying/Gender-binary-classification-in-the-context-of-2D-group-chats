@@ -1,0 +1,44 @@
+# 数据与模型(隐私, 永不入库)
+main/
+aux/
+staging/
+trainsets/
+models/
+model-archive/
+backups/
+logs/
+outputs/
+media/
+research/
+installers/
+*.db
+*.db-wal
+*.db-shm
+*.pt
+*.safetensors
+*.bin
+
+# 本地配置(含真实ID/密钥)
+config/config*.json
+!config/config.example.json
+config/llm*.json
+!config/llm.example.json
+config/llm.local.json
+config/excluded_users.json
+train/llm-config.json
+train/*token*.py
+**/*token*.local.json
+
+# 采集运行时
+qr_*.png
+qr_*.txt
+napcat-login.env
+poll-*.tmp
+ws_probe.*
+
+# 通用
+node_modules/
+__pycache__/
+*.pyc
+.DS_Store
+Thumbs.db
