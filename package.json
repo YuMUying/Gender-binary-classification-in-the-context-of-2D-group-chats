@@ -1,0 +1,21 @@
+{
+  "name": "qq-gender-dataset-collector",
+  "version": "0.1.0",
+  "description": "QQ 群聊数据采集服务：为'根据发言推测性别'标定器构建与维护数据集（OneBot 11 / NapCatQQ）",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "bulk": "node scripts/bulk-collect.js",
+    "export": "node scripts/export-dataset.js",
+    "label": "node scripts/label.js",
+    "stats": "node scripts/stats.js"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "engines": {
+    "node": ">=22.5"
+  },
+  "private": true
+}

@@ -1,0 +1,50 @@
+{
+  "onebot": {
+    "wsUrl": "ws://127.0.0.1:3001",
+    "httpUrl": "http://127.0.0.1:3000",
+    "accessToken": ""
+  },
+  "database": "data/qqchat.db",
+  "collect": {
+    "groups": [123456789],
+    "friends": [],
+    "ignoreSelf": true,
+    "live": true,
+    "backfillOnStart": true,
+    "backfill": {
+      "pageSize": 20,
+      "delayMs": 800,
+      "maxPagesPerRun": 5000,
+      "untilSeq": null,
+      "maxPerGroup": null
+    },
+    "media": {
+      "enabled": true,
+      "types": ["image", "market_face"],
+      "backfillDownload": true,
+      "delayMs": 1000,
+      "dir": "data/media"
+    }
+  },
+  "context": {
+    "enabled": true,
+    "users": [987654321],
+    "window": 5,
+    "onBackfill": true,
+    "dir": "data/context"
+  },
+  "schedule": {
+    "enabled": true,
+    "intervalMinutes": 30
+  },
+  "reply": {
+    "enabled": false,
+    "triggers": [
+      { "match": "exact", "keyword": "ping", "reply": "pong" }
+    ]
+  },
+  "logging": {
+    "level": "info",
+    "logEvery": 200
+  }
+}
