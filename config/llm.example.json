@@ -11,6 +11,7 @@
   },
   "default_model": "chat",
   "persona": "（可自定义人设；留空则用内置默认——口语化中文助手，支持角色扮演，主动用工具查树莓派状态）",
+  "persona_card": "（默认人设指向 personas/ 下的角色卡文件名(不带.json)，如：橘喵；设置后未加载任何卡时用该卡，/uncard 也回落到它；与 persona 字段二选一，persona_card 优先）",
   "limits": {
     "dailyTokenBudget": 2000000,
     "dailyCallBudget": 500,

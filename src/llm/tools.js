@@ -233,6 +233,66 @@ export function buildTools(cfg, collectorDb, chatDb, log, ctx = {}) {
     }
   }
 
+// 追加到 src/llm/tools.js 的 buildTools 内: 联网检索工具(webSearch + fetchPage)
+// ===== web_search / fetch_page (2026-09-06) =====
+async function webSearch(args) {
+  const q = String(args.query ?? '').trim();
+  if (!q) return 'query 不能为空';
+  const n = Math.min(Math.max(Number(args.count) || 5, 1), 10);
+  const url = 'https://cn.bing.com/search?format=rss&count=' + n + '&q=' + encodeURIComponent(q);
+  const res = await fetch(url, {
+    headers: { 'User-Agent': 'Mozilla/5.0', 'Accept-Language': 'zh-CN,zh;q=0.9' },
+    signal: AbortSignal.timeout(15000),
+  });
+  if (!res.ok) return `搜索请求失败: HTTP ${res.status}`;
+  const xml = await res.text();
+  const items = [];
+  const re = /<item>([\s\S]*?)<\/item>/g;
+  let m;
+  while ((m = re.exec(xml)) && items.length < n) {
+    const seg = m[1];
+    const pick = (tag) => {
+      const mm = seg.match(new RegExp('<' + tag + '>([\s\S]*?)</' + tag + '>'));
+      if (!mm) return '';
+      return mm[1]
+        .replace(/<!\[CDATA\[|\]\]>/g, '')
+        .replace(/<[^>]+>/g, '')
+        .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
+        .replace(/&quot;/g, '"').replace(/&#39;/g, "'").trim();
+    };
+    items.push({ title: pick('title'), url: pick('link'), snippet: pick('description') });
+  }
+  if (!items.length) return `「${q}」没有搜索结果（或被风控）。可以换个关键词，或用 fetch_page 直接读 URL。`;
+  return items.map((it, i) => `${i + 1}. ${it.title}\n   ${it.url}\n   ${it.snippet}`).join('\n');
+}
+
+async function fetchPage(args) {
+  const url = String(args.url ?? '').trim();
+  if (!/^https?:\/\//i.test(url)) return 'url 必须以 http(s):// 开头';
+  const res = await fetch(url, {
+    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8' },
+    signal: AbortSignal.timeout(20000),
+    redirect: 'follow',
+  });
+  if (!res.ok) return `页面请求失败: HTTP ${res.status}`;
+  const ct = res.headers.get('content-type') ?? '';
+  if (!/text\/html|text\/plain|application\/(json|xml|rss|xhtml)/i.test(ct)) {
+    return `不支持的内容类型: ${ct}（仅支持网页/文本类）`;
+  }
+  let html = await res.text();
+  html = html
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<nav[\s\S]*?<\/nav>/gi, ' ').replace(/<footer[\s\S]*?<\/footer>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim();
+  return `【${url} 的正文摘录】\n${html}`;
+}
+
+
   // ---------- 注册表 ----------
   const defs = [
     {
@@ -300,6 +360,37 @@ export function buildTools(cfg, collectorDb, chatDb, log, ctx = {}) {
         parameters: { type: 'object', properties: {}, additionalProperties: false },
       },
     },
+    {
+      type: 'function',
+      function: {
+        name: 'web_search',
+        description: '联网搜索：用 Bing 检索实时信息（新闻/资料/价格/天气等），返回标题+链接+摘要。主人问「搜一下」「最新的」「现在」「网上」或需要时效性信息时调用。',
+        parameters: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', description: '搜索关键词（可用中文）' },
+            count: { type: 'integer', description: '结果条数 1-10, 默认5' },
+          },
+          required: ['query'],
+          additionalProperties: false,
+        },
+      },
+    },
+    {
+      type: 'function',
+      function: {
+        name: 'fetch_page',
+        description: '抓取指定网页的正文文本（去标签）。搜索结果里某条链接需要细读时，或主人直接给 URL 时调用。',
+        parameters: {
+          type: 'object',
+          properties: {
+            url: { type: 'string', description: '完整的 http(s):// 网页地址' },
+          },
+          required: ['url'],
+          additionalProperties: false,
+        },
+      },
+    },
   ];
 
   const impls = {
@@ -309,6 +400,8 @@ export function buildTools(cfg, collectorDb, chatDb, log, ctx = {}) {
     pi_tasks: piTasks,
     backfill_range: backfillRange,
     backup_now: backupNow,
+    web_search: webSearch,
+    fetch_page: fetchPage,
   };
 
   async function exec(name, argsJson) {

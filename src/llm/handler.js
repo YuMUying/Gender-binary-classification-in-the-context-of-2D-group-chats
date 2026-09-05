@@ -50,6 +50,20 @@ export function makeLlmHandler(config, collectorDb, bot, log) {
   if (!cfg) return null;
   if (!cfg.allow_users.length) throw new Error('llm.json 未配置 allow_users');
 
+  // 默认人设可以指向一张角色卡(llm.json 的 persona_card: "卡名"), 未加载任何卡时用它
+  let defaultPersonaName = '阿雪';
+  if (cfg.persona_card) {
+    try {
+      const cardFile = path.join(PERSONA_DIR, cfg.persona_card + '.json');
+      const card = JSON.parse(readFileSync(cardFile, 'utf8'));
+      defaultPersonaName = card.name || card.名字 || cfg.persona_card;
+      cfg.persona = composeCardPersona(card, cfg.persona_card);
+      log.info(`[llm] 默认人设=角色卡「${defaultPersonaName}」(${cfg.persona_card}.json)`);
+    } catch (e) {
+      log.warn(`[llm] persona_card「${cfg.persona_card}」加载失败, 回落内置人设: ${e.message}`);
+    }
+  }
+
   // 运行环境：供工具层使用（各自 bot 的 HTTP API、各自的采集库、各自在的群）
   cfg._ctx = {
     httpUrl: config.onebot.httpUrl,
@@ -160,7 +174,7 @@ export function makeLlmHandler(config, collectorDb, bot, log) {
     if (/^\/?(?:cards|角色卡列表|角色卡)\s*$/i.test(text)) {
       const cards = listPersonaCards();
       const cur = personaMap.get(sessionPeer(record));
-      await sendPrivate(peer, `【角色卡】当前: ${cur ? cur.name : '默认（阿雪）'}\n可用:\n${cards.map((c) => `${cur && cur.name === c.name ? '▶' : ' '} ${c.file} — ${c.name}`).join('\n')}\n加载: /card <名字>  卸载: /uncard`);
+      await sendPrivate(peer, `【角色卡】当前: ${cur ? cur.name : '默认（' + defaultPersonaName + '）'}\n可用:\n${cards.map((c) => `${cur && cur.name === c.name ? '▶' : ' '} ${c.file} — ${c.name}${c.file === cfg.persona_card ? '（默认）' : ''}`).join('\n')}\n加载: /card <名字>  卸载: /uncard`);
       return true;
     }
     const mCard = text.match(/^\/?(?:card|加载角色卡)\s+(\S+)$/);
@@ -184,7 +198,7 @@ export function makeLlmHandler(config, collectorDb, bot, log) {
     }
     if (/^\/?(?:uncard|卸载角色卡)$/i.test(text)) {
       personaMap.delete(sessionPeer(record));
-      await sendPrivate(peer, '已卸载角色卡，回到默认人设（阿雪）。');
+      await sendPrivate(peer, `已卸载角色卡，回到默认人设（${defaultPersonaName}）。`);
       return true;
     }
 
