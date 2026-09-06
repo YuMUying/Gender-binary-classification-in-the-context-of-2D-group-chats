@@ -318,6 +318,35 @@ async function fetchPage(args) {
   return `${head}\n\n${text}`;
 }
 
+// ===== deep_search (GLM云端检索, 2026-09-06) =====
+// 通道: 智谱 chat completions + web_search 工具 (key 在 cfg.search.apiKey, 不入git)
+// 返回: 带引用的综述 + 来源列表; 比Bing RSS质量高一个量级(时效性/中文/合成)
+async function deepSearch(args) {
+  const q = String(args.query ?? '').trim();
+  if (!q) return 'query 不能为空';
+  const s = cfg.search;
+  if (!s?.apiKey) return '未配置检索通道(llm.json 缺 search.apiKey)';
+  const body = {
+    model: s.model || 'glm-5.3-flash',
+    messages: [{ role: 'user', content: `${q}\n\n(回答需基于联网检索结果, 末尾用[来源N]标注, 并列出关键来源标题)` }],
+    tools: [{ type: 'web_search', web_search: { enable: true } }],
+    stream: false,
+  };
+  const res = await fetch('https://open.bigmodel.cn/api/paas/v4/chat/completions', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Authorization: 'Bearer ' + s.apiKey },
+    body: JSON.stringify(body),
+    signal: AbortSignal.timeout(90000),
+  });
+  if (!res.ok) return `云端检索失败: HTTP ${res.status}`;
+  const data = await res.json();
+  const content = data.choices?.[0]?.message?.content ?? '';
+  if (!content) return '云端检索返回空(可能触发风控或欠费)';
+  const refs = (data.web_search ?? []).map((it, i) => `${i + 1}. ${it.title ?? ''} ${it.link ?? it.url ?? ''}`.trim());
+  return `【云端检索·综述】\n${content}${refs.length ? '\n\n【来源】\n' + refs.slice(0, 8).join('\n') : ''}`;
+}
+
+
 // ---------- 注册表 ----------
   const defs = [
     {
@@ -416,6 +445,21 @@ async function fetchPage(args) {
         },
       },
     },
+    {
+      type: 'function',
+      function: {
+        name: 'deep_search',
+        description: '云端深度检索（推荐）：LLM+联网搜索的合成通道，返回带引用的最新信息综述。时效性问题（新闻/版本/价格/赛事/天气）、需要准确出处的问题优先用这个，比 web_search 强得多。',
+        parameters: {
+          type: 'object',
+          properties: {
+            query: { type: 'string', description: '检索问题（完整的自然语言问题，可用中文）' },
+          },
+          required: ['query'],
+          additionalProperties: false,
+        },
+      },
+    },
   ];
 
   const impls = {
@@ -427,6 +471,7 @@ async function fetchPage(args) {
     backup_now: backupNow,
     web_search: webSearch,
     fetch_page: fetchPage,
+    deep_search: deepSearch,
   };
 
   async function exec(name, argsJson) {
@@ -438,7 +483,7 @@ async function fetchPage(args) {
     }
     try {
       const out = String(await fn(args) ?? '(空)');
-      const cap = name === 'fetch_page' ? lim.toolOutputMaxChars * 3 : lim.toolOutputMaxChars;
+      const cap = (name === 'fetch_page' || name === 'deep_search') ? lim.toolOutputMaxChars * 3 : lim.toolOutputMaxChars;
       return out.length > cap ? out.slice(0, cap) + `\n...(截断,共${out.length}字)` : out;
     } catch (e) {
       log?.warn?.(`[llm][tool] ${name} 失败: ${e.message}`);

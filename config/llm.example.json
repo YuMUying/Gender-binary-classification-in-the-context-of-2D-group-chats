@@ -1,6 +1,8 @@
 {
   "enabled": true,
-  "allow_users": [0],
+  "allow_users": [
+    0
+  ],
   "providers": {
     "deepseek": {
       "type": "openai",
@@ -16,5 +18,10 @@
     "dailyTokenBudget": 2000000,
     "dailyCallBudget": 500,
     "cooldownMs": 2000
+  },
+  "search": {
+    "provider": "glm",
+    "model": "glm-5.3-flash",
+    "apiKey": "填智谱key(bigmodel.cn), deep_search工具用; 不配则无云端检索"
   }
 }
