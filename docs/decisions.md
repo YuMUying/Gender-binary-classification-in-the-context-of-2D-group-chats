@@ -63,3 +63,9 @@ s0v59a 消融（唯一差异 --use-nickname）结果：val 用户级 acc 0.78-0.
 - **实现**：src/infer.js、src/reply.js 整体删除；index.js 拆除接线；llm/handler.js 新增 /cards /card <名> /uncard 三指令（personas/*.json 角色卡 → composeCardPersona 拼装系统提示词，运行时 personaMap 会话级生效）；filter.js 保留推理/xnn 命令过滤（历史消息纯净度）
 - **Pi 部署**（01:46）：4 服务重启 active，llm 启用日志正常；infer.js/reply.js 移入 _retired/（备份），acao_value/xnn_index/lgbt_index.csv 归档至 outputs/_archive-sensitive/
 - **权重公开**：Release v1.0.0（r3-s0v56 三 seed + bert-v10-wb-fix，各 390MB，sha256 见公开仓库 docs/models-checksums.md）；理由=复现性是论文路线的硬需求，LFS 免费 1GB 配额不够故走 Release 资产；tokenizer 经 HF Hub 按 ckpt 内 model_name 拉取，无私有内容；风险认知=s0v57 已证 memorization 零泛化，且 README 声明不得用于对真实个体做判定
+
+## ADR-2026-09-06b 联网检索收敛为 GLM 单通道
+
+- 背景：web_search(Bing中国站RSS) 摘要薄且易撞反爬，fetch_page 对 JS 渲染站无解（正文抽取空/噪声），用户实测后裁决
+- 决定：tools.js 切除 webSearch/fetchPage，仅注册 deep_search（智谱 chat+web_search 工具，key 在 llm.json search 段，不入库）；截断额度×3；URL 可进 query
+- 后果：机器人联网问答质量取决于 GLM 检索（实测带来源/日期/合成良好）；失去免费快查与自定义正文抽取路径，若 GLM 通道欠费则机器人无联网
