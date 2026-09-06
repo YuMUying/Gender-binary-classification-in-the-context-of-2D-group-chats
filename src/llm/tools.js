@@ -252,7 +252,7 @@ async function webSearch(args) {
   while ((m = re.exec(xml)) && items.length < n) {
     const seg = m[1];
     const pick = (tag) => {
-      const mm = seg.match(new RegExp('<' + tag + '>([\s\S]*?)</' + tag + '>'));
+      const mm = seg.match(new RegExp('<' + tag + '>([\\s\\S]*?)</' + tag + '>'));
       if (!mm) return '';
       return mm[1]
         .replace(/<!\[CDATA\[|\]\]>/g, '')
@@ -269,31 +269,56 @@ async function webSearch(args) {
 async function fetchPage(args) {
   const url = String(args.url ?? '').trim();
   if (!/^https?:\/\//i.test(url)) return 'url 必须以 http(s):// 开头';
-  const res = await fetch(url, {
-    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)', 'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8' },
-    signal: AbortSignal.timeout(20000),
-    redirect: 'follow',
-  });
-  if (!res.ok) return `页面请求失败: HTTP ${res.status}`;
+  const UA = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+  };
+  let res;
+  try {
+    res = await fetch(url, { headers: UA, signal: AbortSignal.timeout(20000), redirect: 'follow' });
+  } catch (e) {
+    return `页面请求失败: ${e.message}（站点可能无响应或被墙）`;
+  }
+  if (!res.ok) return `页面请求失败: HTTP ${res.status}（可能需要登录/反爬）`;
   const ct = res.headers.get('content-type') ?? '';
   if (!/text\/html|text\/plain|application\/(json|xml|rss|xhtml)/i.test(ct)) {
     return `不支持的内容类型: ${ct}（仅支持网页/文本类）`;
   }
-  let html = await res.text();
-  html = html
-    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
-    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
-    .replace(/<nav[\s\S]*?<\/nav>/gi, ' ').replace(/<footer[\s\S]*?<\/footer>/gi, ' ')
-    .replace(/<[^>]+>/g, ' ')
-    .replace(/&nbsp;/g, ' ').replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-    .replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&#39;/g, "'")
-    .replace(/\s+/g, ' ')
-    .trim();
-  return `【${url} 的正文摘录】\n${html}`;
+  // 字节级取body, 按声明字符集解码(老站GBK乱码问题)
+  const buf = await res.arrayBuffer();
+  let html = new TextDecoder('utf-8', { fatal: false }).decode(buf);
+  if (/[\uFFFD]{3,}/.test(html)) {
+    const m = ct.match(/charset=([\w-]+)/i) ?? html.match(/<meta[^>]+charset=["']?([\w-]+)/i);
+    if (m && !/utf-?8/i.test(m[1])) {
+      try { html = new TextDecoder(m[1].toLowerCase()).decode(buf); } catch { /* 解码器不存在就保持utf-8 */ }
+    }
+  }
+  const title = (html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? '').replace(/<[^>]+>/g, '').trim().slice(0, 120);
+  const desc = (html.match(/<meta[^>]+name=["']description["'][^>]*content=["']([^"']*)["']/i)?.[1] ?? '').trim().slice(0, 200);
+  // 块级抽取: 剪掉不可见区, 块级闭合标签转换行, 剥标签, 按行清理
+  let body = html
+    .replace(/<!--[\s\S]*?-->/g, ' ')
+    .replace(/<(script|style|noscript|svg|iframe|template)[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<(nav|footer|header|aside|form)[\s\S]*?<\/\1>/gi, ' ')
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/<\/(p|div|li|h[1-6]|tr|section|article|blockquote|pre|dd|dt|option)>/gi, '\n')
+    .replace(/<[^>]+>/g, ' ');
+  const lines = body
+    .split('\n')
+    .map((l) => l.replace(/&nbsp;/gi, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&#x?[0-9a-f]+;/gi, ' ').replace(/\s+/g, ' ').trim())
+    .filter((l) => l.length >= 4)
+    // 去连续重复行(菜单循环渲染)
+    .filter((l, i, arr) => i === 0 || l !== arr[i - 1]);
+  const text = lines.join('\n');
+  const head = [`【网页】${title || url}`, desc ? `【摘要】${desc}` : '', `【URL】${res.url || url}`].filter(Boolean).join('\n');
+  if (lines.length < 3 || text.length < 150) {
+    return `${head}\n\n⚠️ 正文提取不到内容——该页面几乎肯定是 JS 动态渲染或需要登录（常见于百度/知乎/B站/微博的页面）。\n建议: ①用 web_search 搜关键词拿摘要 ②换该站点的文章直链或移动版(m.) ③告诉我标题我帮你搜。`;
+  }
+  return `${head}\n\n${text}`;
 }
 
-
-  // ---------- 注册表 ----------
+// ---------- 注册表 ----------
   const defs = [
     {
       type: 'function',
@@ -412,7 +437,9 @@ async function fetchPage(args) {
       try { args = JSON.parse(argsJson); } catch { return '参数不是合法 JSON'; }
     }
     try {
-      return truncate(String(await fn(args) ?? '(空)'));
+      const out = String(await fn(args) ?? '(空)');
+      const cap = name === 'fetch_page' ? lim.toolOutputMaxChars * 3 : lim.toolOutputMaxChars;
+      return out.length > cap ? out.slice(0, cap) + `\n...(截断,共${out.length}字)` : out;
     } catch (e) {
       log?.warn?.(`[llm][tool] ${name} 失败: ${e.message}`);
       return `工具执行失败: ${e.message}`;
