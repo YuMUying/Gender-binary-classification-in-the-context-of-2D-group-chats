@@ -233,91 +233,6 @@ export function buildTools(cfg, collectorDb, chatDb, log, ctx = {}) {
     }
   }
 
-// 追加到 src/llm/tools.js 的 buildTools 内: 联网检索工具(webSearch + fetchPage)
-// ===== web_search / fetch_page (2026-09-06) =====
-async function webSearch(args) {
-  const q = String(args.query ?? '').trim();
-  if (!q) return 'query 不能为空';
-  const n = Math.min(Math.max(Number(args.count) || 5, 1), 10);
-  const url = 'https://cn.bing.com/search?format=rss&count=' + n + '&q=' + encodeURIComponent(q);
-  const res = await fetch(url, {
-    headers: { 'User-Agent': 'Mozilla/5.0', 'Accept-Language': 'zh-CN,zh;q=0.9' },
-    signal: AbortSignal.timeout(15000),
-  });
-  if (!res.ok) return `搜索请求失败: HTTP ${res.status}`;
-  const xml = await res.text();
-  const items = [];
-  const re = /<item>([\s\S]*?)<\/item>/g;
-  let m;
-  while ((m = re.exec(xml)) && items.length < n) {
-    const seg = m[1];
-    const pick = (tag) => {
-      const mm = seg.match(new RegExp('<' + tag + '>([\\s\\S]*?)</' + tag + '>'));
-      if (!mm) return '';
-      return mm[1]
-        .replace(/<!\[CDATA\[|\]\]>/g, '')
-        .replace(/<[^>]+>/g, '')
-        .replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&')
-        .replace(/&quot;/g, '"').replace(/&#39;/g, "'").trim();
-    };
-    items.push({ title: pick('title'), url: pick('link'), snippet: pick('description') });
-  }
-  if (!items.length) return `「${q}」没有搜索结果（或被风控）。可以换个关键词，或用 fetch_page 直接读 URL。`;
-  return items.map((it, i) => `${i + 1}. ${it.title}\n   ${it.url}\n   ${it.snippet}`).join('\n');
-}
-
-async function fetchPage(args) {
-  const url = String(args.url ?? '').trim();
-  if (!/^https?:\/\//i.test(url)) return 'url 必须以 http(s):// 开头';
-  const UA = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
-    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-  };
-  let res;
-  try {
-    res = await fetch(url, { headers: UA, signal: AbortSignal.timeout(20000), redirect: 'follow' });
-  } catch (e) {
-    return `页面请求失败: ${e.message}（站点可能无响应或被墙）`;
-  }
-  if (!res.ok) return `页面请求失败: HTTP ${res.status}（可能需要登录/反爬）`;
-  const ct = res.headers.get('content-type') ?? '';
-  if (!/text\/html|text\/plain|application\/(json|xml|rss|xhtml)/i.test(ct)) {
-    return `不支持的内容类型: ${ct}（仅支持网页/文本类）`;
-  }
-  // 字节级取body, 按声明字符集解码(老站GBK乱码问题)
-  const buf = await res.arrayBuffer();
-  let html = new TextDecoder('utf-8', { fatal: false }).decode(buf);
-  if (/[\uFFFD]{3,}/.test(html)) {
-    const m = ct.match(/charset=([\w-]+)/i) ?? html.match(/<meta[^>]+charset=["']?([\w-]+)/i);
-    if (m && !/utf-?8/i.test(m[1])) {
-      try { html = new TextDecoder(m[1].toLowerCase()).decode(buf); } catch { /* 解码器不存在就保持utf-8 */ }
-    }
-  }
-  const title = (html.match(/<title[^>]*>([\s\S]*?)<\/title>/i)?.[1] ?? '').replace(/<[^>]+>/g, '').trim().slice(0, 120);
-  const desc = (html.match(/<meta[^>]+name=["']description["'][^>]*content=["']([^"']*)["']/i)?.[1] ?? '').trim().slice(0, 200);
-  // 块级抽取: 剪掉不可见区, 块级闭合标签转换行, 剥标签, 按行清理
-  let body = html
-    .replace(/<!--[\s\S]*?-->/g, ' ')
-    .replace(/<(script|style|noscript|svg|iframe|template)[\s\S]*?<\/\1>/gi, ' ')
-    .replace(/<(nav|footer|header|aside|form)[\s\S]*?<\/\1>/gi, ' ')
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/(p|div|li|h[1-6]|tr|section|article|blockquote|pre|dd|dt|option)>/gi, '\n')
-    .replace(/<[^>]+>/g, ' ');
-  const lines = body
-    .split('\n')
-    .map((l) => l.replace(/&nbsp;/gi, ' ').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&#x?[0-9a-f]+;/gi, ' ').replace(/\s+/g, ' ').trim())
-    .filter((l) => l.length >= 4)
-    // 去连续重复行(菜单循环渲染)
-    .filter((l, i, arr) => i === 0 || l !== arr[i - 1]);
-  const text = lines.join('\n');
-  const head = [`【网页】${title || url}`, desc ? `【摘要】${desc}` : '', `【URL】${res.url || url}`].filter(Boolean).join('\n');
-  if (lines.length < 3 || text.length < 150) {
-    return `${head}\n\n⚠️ 正文提取不到内容——该页面几乎肯定是 JS 动态渲染或需要登录（常见于百度/知乎/B站/微博的页面）。\n建议: ①用 web_search 搜关键词拿摘要 ②换该站点的文章直链或移动版(m.) ③告诉我标题我帮你搜。`;
-  }
-  return `${head}\n\n${text}`;
-}
-
 // ===== deep_search (GLM云端检索, 2026-09-06) =====
 // 通道: 智谱 chat completions + web_search 工具 (key 在 cfg.search.apiKey, 不入git)
 // 返回: 带引用的综述 + 来源列表; 比Bing RSS质量高一个量级(时效性/中文/合成)
@@ -405,51 +320,11 @@ async function deepSearch(args) {
           additionalProperties: false,
         },
       },
-    },
-    {
-      type: 'function',
-      function: {
-        name: 'backup_now',
-        description: '立即在树莓派上生成采集数据库快照（入库流程第一步，快照生成后由 PC 端 gis ingest-pi 合并入主库）。主人说「备份一下」「生成快照」或要求入库时调用。',
-        parameters: { type: 'object', properties: {}, additionalProperties: false },
-      },
-    },
-    {
-      type: 'function',
-      function: {
-        name: 'web_search',
-        description: '联网搜索：用 Bing 检索实时信息（新闻/资料/价格/天气等），返回标题+链接+摘要。主人问「搜一下」「最新的」「现在」「网上」或需要时效性信息时调用。',
-        parameters: {
-          type: 'object',
-          properties: {
-            query: { type: 'string', description: '搜索关键词（可用中文）' },
-            count: { type: 'integer', description: '结果条数 1-10, 默认5' },
-          },
-          required: ['query'],
-          additionalProperties: false,
-        },
-      },
-    },
-    {
-      type: 'function',
-      function: {
-        name: 'fetch_page',
-        description: '抓取指定网页的正文文本（去标签）。搜索结果里某条链接需要细读时，或主人直接给 URL 时调用。',
-        parameters: {
-          type: 'object',
-          properties: {
-            url: { type: 'string', description: '完整的 http(s):// 网页地址' },
-          },
-          required: ['url'],
-          additionalProperties: false,
-        },
-      },
-    },
-    {
+    },    {
       type: 'function',
       function: {
         name: 'deep_search',
-        description: '云端深度检索（推荐）：LLM+联网搜索的合成通道，返回带引用的最新信息综述。时效性问题（新闻/版本/价格/赛事/天气）、需要准确出处的问题优先用这个，比 web_search 强得多。',
+        description: '联网检索（唯一通道）：GLM云端搜索的合成回答，带引用与来源，信息新。时效性问题（新闻/版本/价格/赛事/天气）、需要出处的问题、或主人给出网址想了解其内容（URL直接放进query）时调用。',
         parameters: {
           type: 'object',
           properties: {
@@ -469,8 +344,6 @@ async function deepSearch(args) {
     pi_tasks: piTasks,
     backfill_range: backfillRange,
     backup_now: backupNow,
-    web_search: webSearch,
-    fetch_page: fetchPage,
     deep_search: deepSearch,
   };
 
@@ -483,7 +356,7 @@ async function deepSearch(args) {
     }
     try {
       const out = String(await fn(args) ?? '(空)');
-      const cap = (name === 'fetch_page' || name === 'deep_search') ? lim.toolOutputMaxChars * 3 : lim.toolOutputMaxChars;
+      const cap = name === 'deep_search' ? lim.toolOutputMaxChars * 3 : lim.toolOutputMaxChars;
       return out.length > cap ? out.slice(0, cap) + `\n...(截断,共${out.length}字)` : out;
     } catch (e) {
       log?.warn?.(`[llm][tool] ${name} 失败: ${e.message}`);
