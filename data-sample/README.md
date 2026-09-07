@@ -23,7 +23,7 @@
 
 ## 引用（Citation）
 
- Ma, Yingsong (2026). A de-identified message sample and annotation ledger of Chinese interest-group chats for gender-confusion research (v1). Zenodo. DOI: 10.5281/zenodo.XXXXXXXX（发布后回填）
+ Ma, Yingsong (2026). A de-identified message sample and annotation ledger of Chinese interest-group chats for gender-confusion research (v1). Zenodo. DOI: 10.5281/zenodo.22647691
 
 关联论文：*Mitigating Gender Confusion in Male-Dominated Interest Communities: Style Shortcut Breakdown and Selective Rejection*（arXiv, 2026）。
 
