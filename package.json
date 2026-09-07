@@ -5,15 +5,11 @@
   "type": "module",
   "main": "src/index.js",
   "scripts": {
-    "start": "node src/index.js",
-    "bulk": "node scripts/bulk-collect.js",
     "export": "node scripts/export-dataset.js",
     "label": "node scripts/label.js",
     "stats": "node scripts/stats.js"
   },
-  "dependencies": {
-    "ws": "^8.18.0"
-  },
+  "dependencies": {},
   "engines": {
     "node": ">=22.5"
   },
