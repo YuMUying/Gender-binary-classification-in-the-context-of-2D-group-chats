@@ -1,0 +1,32 @@
+{
+  "version": "v1",
+  "generated": "2026-09-08",
+  "rules_version": "R6-2026-09-08",
+  "seed": 42,
+  "messages": {
+    "total": 29874,
+    "by_group": {
+      "anime-2": 4000,
+      "anime-1": 6000,
+      "anime-3": 3500,
+      "anime-4": 1500,
+      "otome-2": 969,
+      "otome-3": 2135,
+      "otome-1": 11770
+    },
+    "days_covered": 582,
+    "day_min": "2025-01-11",
+    "day_max": "2026-09-07"
+  },
+  "annotations": {
+    "speakers": 190
+  },
+  "excluded_from_messages": [
+    "190 labeled ledger speakers (text only; fields released separately)",
+    "author account",
+    "system/bot accounts",
+    "empty texts"
+  ],
+  "note": "Otome groups are released in full (non-ledger portion) so the cross-community scan can be reproduced.",
+  "sha256_manifest": "5fc490fbe63e8e6f9eb9d5648346d9fe78d3fc8590e43503d284afc08e5e0900"
+}
